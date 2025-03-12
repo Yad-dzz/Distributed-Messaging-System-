@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.ArrayList;
+import java.util.List;
 
 public class SMTPClientHandler implements Runnable {
     private Socket clientSocket;
@@ -13,13 +15,13 @@ public class SMTPClientHandler implements Runnable {
     private BufferedReader in;
 
     private String sender = null;
-    private String recipient = null;
+    private List<String> recipients = new ArrayList<>();
     private StringBuilder emailContent = new StringBuilder();
     private boolean receivingData = false;
 
     // Définition des états de l'automate
     private enum State {
-        WAITING_FOR_HELO,
+        WAITING_FOR_HELO_EHLO,
         WAITING_FOR_MAIL_FROM,
         WAITING_FOR_RCPT_TO,
         WAITING_FOR_DATA,
@@ -31,7 +33,7 @@ public class SMTPClientHandler implements Runnable {
 
     public SMTPClientHandler(Socket socket) {
         this.clientSocket = socket;
-        this.currentState = State.WAITING_FOR_HELO; // L'automate commence en attente de HELO
+        this.currentState = State.WAITING_FOR_HELO_EHLO; // L'automate commence en attente de HELO/EHLO
     }
 
     @Override
@@ -45,7 +47,7 @@ public class SMTPClientHandler implements Runnable {
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
                 System.out.println("Received: " + inputLine);
-                handleSMTPCommand(inputLine);
+                handleSMTPCommand(inputLine.toUpperCase()); // Convert command to uppercase
                 if (currentState == State.COMPLETED) break;
             }
         } catch (IOException e) {
@@ -61,12 +63,18 @@ public class SMTPClientHandler implements Runnable {
 
     private void handleSMTPCommand(String command) {
         switch (currentState) {
-            case WAITING_FOR_HELO:
+            case WAITING_FOR_HELO_EHLO:
                 if (command.startsWith("HELO")) {
                     out.println("250 Hello");
                     currentState = State.WAITING_FOR_MAIL_FROM;
+                } else if (command.startsWith("EHLO")) {
+                    out.println("250-Hello");
+                    out.println("250-8BITMIME");
+                    out.println("250-SIZE 10485760");
+                    out.println("250 HELP");
+                    currentState = State.WAITING_FOR_MAIL_FROM;
                 } else {
-                    out.println("503 Expected HELO first");
+                    out.println("503 Bad sequence of commands");
                 }
                 break;
 
@@ -76,32 +84,30 @@ public class SMTPClientHandler implements Runnable {
                     out.println("250 OK");
                     currentState = State.WAITING_FOR_RCPT_TO;
                 } else {
-                    out.println("503 Expected MAIL FROM");
+                    out.println("503 Bad sequence of commands");
                 }
                 break;
 
             case WAITING_FOR_RCPT_TO:
                 if (command.startsWith("RCPT TO:")) {
-                    recipient = extractEmail(command);
+                    String recipient = extractEmail(command);
                     if (Files.exists(Paths.get("mailserver/" + recipient))) {
+                        recipients.add(recipient);
                         out.println("250 OK - User Exists");
-                        currentState = State.WAITING_FOR_DATA;
                     } else {
                         out.println("550 No such user");
                     }
+                } else if (command.startsWith("DATA")) {
+                    if (!recipients.isEmpty()) {
+                        out.println("354 Start mail input; end with <CRLF>.<CRLF>");
+                        emailContent.setLength(0); // Réinitialise le contenu du mail
+                        receivingData = true;
+                        currentState = State.RECEIVING_DATA;
+                    } else {
+                        out.println("554 Transaction failed - No valid recipients");
+                    }
                 } else {
-                    out.println("503 Expected RCPT TO");
-                }
-                break;
-
-            case WAITING_FOR_DATA:
-                if (command.startsWith("DATA")) {
-                    out.println("354 Start mail input; end with <CRLF>.<CRLF>");
-                    emailContent.setLength(0); // Réinitialise le contenu du mail
-                    receivingData = true;
-                    currentState = State.RECEIVING_DATA;
-                } else {
-                    out.println("503 Expected DATA");
+                    out.println("503 Bad sequence of commands");
                 }
                 break;
 
@@ -118,6 +124,7 @@ public class SMTPClientHandler implements Runnable {
             case COMPLETED:
                 if (command.startsWith("QUIT")) {
                     out.println("221 Bye");
+                    currentState = State.COMPLETED;
                 } else {
                     out.println("503 Session closing");
                 }
@@ -130,24 +137,26 @@ public class SMTPClientHandler implements Runnable {
     }
 
     private void saveEmail() {
-        if (sender == null || recipient == null || emailContent.length() == 0) return;
+        if (sender == null || recipients.isEmpty() || emailContent.length() == 0) return;
 
-        String userDir = "mailserver/" + recipient;
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String filename = userDir + "/" + timestamp + ".txt";
+        for (String recipient : recipients) {
+            String userDir = "mailserver/" + recipient;
+            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+            String filename = userDir + "/" + timestamp + ".txt";
 
-        try {
-            Files.createDirectories(Paths.get(userDir));
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
-                writer.write("From: " + sender + "\n");
-                writer.write("To: " + recipient + "\n");
-                writer.write("Date: " + new Date() + "\n");
-                writer.write("Subject: (No Subject)\n\n");
-                writer.write(emailContent.toString());
+            try {
+                Files.createDirectories(Paths.get(userDir));
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
+                    writer.write("From: " + sender + "\n");
+                    writer.write("To: " + recipient + "\n");
+                    writer.write("Date: " + new Date() + "\n");
+                    writer.write("Subject: (No Subject)\n\n");
+                    writer.write(emailContent.toString());
+                }
+                System.out.println("Email saved to: " + filename);
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-            System.out.println("Email saved to: " + filename);
-        } catch (IOException e) {
-            e.printStackTrace();
         }
     }
 
