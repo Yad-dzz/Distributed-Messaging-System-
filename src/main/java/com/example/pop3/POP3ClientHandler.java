@@ -208,35 +208,38 @@ public class POP3ClientHandler implements Runnable {
 
         String[] parts = inputLine.split(" ");
         if (parts.length == 1) {
-            // Liste complète des messages non supprimés (triés du plus ancien au plus récent)
+            // List all messages except password.txt
+            out.println("+OK"); // Start response
             int messageCount = 0;
             long maildropSize = 0;
 
-            out.println("+OK"); // Début de la réponse
             for (int i = 0; i < emails.size(); i++) {
                 File emailFile = emails.get(i);
-                if (!markedForDeletion.contains(emailFile)) {
+
+                // Exclude password.txt
+                if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt")) {
                     messageCount++;
                     maildropSize += emailFile.length();
-                    out.println((i + 1) + " " + emailFile.length());
+                    out.println(messageCount + " " + emailFile.length());
                 }
             }
-            out.println("."); // Fin de la réponse
+            out.println("."); // End response
         } else if (parts.length == 2) {
-            // Taille d'un message spécifique
+            // List specific message size
             try {
                 int messageNumber = Integer.parseInt(parts[1]);
-                if (messageNumber < 1 || messageNumber > emails.size()) {
-                    out.println("-ERR No such message");
-                    return;
-                }
+                int actualIndex = 0;
 
-                File emailFile = emails.get(messageNumber - 1);
-                if (markedForDeletion.contains(emailFile)) {
-                    out.println("-ERR Message marked for deletion");
-                } else {
-                    out.println("+OK " + messageNumber + " " + emailFile.length());
+                for (File emailFile : emails) {
+                    if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt")) {
+                        actualIndex++;
+                        if (actualIndex == messageNumber) {
+                            out.println("+OK " + messageNumber + " " + emailFile.length());
+                            return;
+                        }
+                    }
                 }
+                out.println("-ERR No such message");
             } catch (NumberFormatException e) {
                 out.println("-ERR Invalid message number");
             }
