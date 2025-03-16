@@ -8,6 +8,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 public class SMTPClientHandler implements Runnable {
     private Socket clientSocket;
@@ -19,7 +20,8 @@ public class SMTPClientHandler implements Runnable {
     private StringBuilder emailContent = new StringBuilder();
     private boolean receivingData = false;
 
-    // Définition des états de l'automate
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})>$");
+
     private enum State {
         WAITING_FOR_HELO_EHLO,
         WAITING_FOR_MAIL_FROM,
@@ -33,7 +35,7 @@ public class SMTPClientHandler implements Runnable {
 
     public SMTPClientHandler(Socket socket) {
         this.clientSocket = socket;
-        this.currentState = State.WAITING_FOR_HELO_EHLO; // L'automate commence en attente de HELO/EHLO
+        this.currentState = State.WAITING_FOR_HELO_EHLO;
     }
 
     @Override
@@ -47,7 +49,7 @@ public class SMTPClientHandler implements Runnable {
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
                 System.out.println("Received: " + inputLine);
-                handleSMTPCommand(inputLine.toUpperCase()); // Convert command to uppercase
+                handleSMTPCommand(inputLine.trim());
                 if (currentState == State.COMPLETED) break;
             }
         } catch (IOException e) {
@@ -62,6 +64,11 @@ public class SMTPClientHandler implements Runnable {
     }
 
     private void handleSMTPCommand(String command) {
+        if (command.isEmpty()) {
+            out.println("500 Empty command");
+            return;
+        }
+
         switch (currentState) {
             case WAITING_FOR_HELO_EHLO:
                 if (command.startsWith("HELO")) {
@@ -74,24 +81,30 @@ public class SMTPClientHandler implements Runnable {
                     out.println("250 HELP");
                     currentState = State.WAITING_FOR_MAIL_FROM;
                 } else {
-                    out.println("503 Bad sequence of commands");
+                    out.println("503 Bad sequence of commands. Expected HELO or EHLO");
                 }
                 break;
 
             case WAITING_FOR_MAIL_FROM:
                 if (command.startsWith("MAIL FROM:")) {
                     sender = extractEmail(command);
-                    out.println("250 OK");
-                    currentState = State.WAITING_FOR_RCPT_TO;
+                    if (sender == null) {
+                        out.println("501 Syntax error in MAIL FROM address");
+                    } else {
+                        out.println("250 OK");
+                        currentState = State.WAITING_FOR_RCPT_TO;
+                    }
                 } else {
-                    out.println("503 Bad sequence of commands");
+                    out.println("503 Bad sequence of commands. Expected MAIL FROM");
                 }
                 break;
 
             case WAITING_FOR_RCPT_TO:
                 if (command.startsWith("RCPT TO:")) {
                     String recipient = extractEmail(command);
-                    if (Files.exists(Paths.get("mailserver/" + recipient))) {
+                    if (recipient == null) {
+                        out.println("501 Syntax error in RCPT TO address");
+                    } else if (Files.exists(Paths.get("mailserver/" + recipient))) {
                         recipients.add(recipient);
                         out.println("250 OK - User Exists");
                     } else {
@@ -100,14 +113,14 @@ public class SMTPClientHandler implements Runnable {
                 } else if (command.startsWith("DATA")) {
                     if (!recipients.isEmpty()) {
                         out.println("354 Start mail input; end with <CRLF>.<CRLF>");
-                        emailContent.setLength(0); // Réinitialise le contenu du mail
+                        emailContent.setLength(0);
                         receivingData = true;
                         currentState = State.RECEIVING_DATA;
                     } else {
                         out.println("554 Transaction failed - No valid recipients");
                     }
                 } else {
-                    out.println("503 Bad sequence of commands");
+                    out.println("503 Bad sequence of commands. Expected RCPT TO or DATA");
                 }
                 break;
 
@@ -124,7 +137,6 @@ public class SMTPClientHandler implements Runnable {
             case COMPLETED:
                 if (command.startsWith("QUIT")) {
                     out.println("221 Bye");
-                    currentState = State.COMPLETED;
                 } else {
                     out.println("503 Session closing");
                 }
@@ -161,6 +173,10 @@ public class SMTPClientHandler implements Runnable {
     }
 
     private String extractEmail(String command) {
-        return command.replaceAll(".*<|>", "").trim(); // Extrait l'email du format SMTP
+        String extracted = command.replaceAll(".*<|>", "").trim();
+        if (!EMAIL_PATTERN.matcher("<" + extracted + ">").matches()) {
+            return null;
+        }
+        return extracted;
     }
 }
