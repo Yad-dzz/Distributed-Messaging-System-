@@ -148,14 +148,31 @@ public class POP3ClientHandler implements Runnable {
 
     private void handlePass(String inputLine) {
         if (user != null) {
-            // Pour simplifier, on accepte n'importe quel mot de passe
-            authenticated = true;
-            out.println("+OK User authenticated");
+            String userDirectory = "mailserver/" + user; // Dossier de l'utilisateur
+            File passwordFile = new File(userDirectory, "password.txt");
+
+            if (passwordFile.exists()) {
+                try (BufferedReader br = new BufferedReader(new FileReader(passwordFile))) {
+                    String storedPassword = br.readLine().trim(); // Lire le mot de passe du fichier
+
+                    String providedPassword = inputLine.replaceFirst("^PASS\\s+", "").trim();
+
+                    if (storedPassword.equals(providedPassword)) { // Comparer avec le mot de passe fourni
+                        authenticated = true;
+                        out.println("+OK User authenticated");
+                    } else {
+                        out.println("-ERR Invalid password");
+                    }
+                } catch (IOException e) {
+                    out.println("-ERR Error reading password file");
+                }
+            } else {
+                out.println("-ERR Password file not found");
+            }
         } else {
             out.println("-ERR User not specified");
         }
     }
-
     private void handleApop(String inputLine) {
         String[] parts = inputLine.split(" ");
         if (parts.length < 3) {
@@ -183,18 +200,15 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
-
         int messageCount = 0;
         long maildropSize = 0;
-
         // Parcourir les emails et ignorer ceux marqués pour suppression
         for (int i = 0; i < emails.size(); i++) {
             File emailFile = emails.get(i);
             if (!markedForDeletion.contains(emailFile)) {
                 messageCount++;
                 maildropSize += emailFile.length();
-            }
-        }
+            }}
 
         // Réponse au format "+OK <nombre de messages> <taille du maildrop>"
         out.println("+OK " + messageCount + " " + maildropSize);
@@ -205,19 +219,18 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
-
         String[] parts = inputLine.split(" ");
         if (parts.length == 1) {
             // List all messages except password.txt
             out.println("+OK"); // Start response
             int messageCount = 0;
             long maildropSize = 0;
-
-            for (int i = 0; i < emails.size(); i++) {
+            for (int i = 0; i < emails.size(); i++)
+            {
                 File emailFile = emails.get(i);
-
                 // Exclude password.txt
-                if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt")) {
+                if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt"))
+                {
                     messageCount++;
                     maildropSize += emailFile.length();
                     out.println(messageCount + " " + emailFile.length());
@@ -236,9 +249,7 @@ public class POP3ClientHandler implements Runnable {
                         if (actualIndex == messageNumber) {
                             out.println("+OK " + messageNumber + " " + emailFile.length());
                             return;
-                        }
-                    }
-                }
+                        }}}
                 out.println("-ERR No such message");
             } catch (NumberFormatException e) {
                 out.println("-ERR Invalid message number");
@@ -288,20 +299,17 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
-
         try {
             int messageNumber = Integer.parseInt(inputLine.substring(5).trim());
             if (messageNumber < 1 || messageNumber > emails.size()) {
                 out.println("-ERR No such message");
                 return;
             }
-
             File emailFile = emails.get(messageNumber - 1);
             if (markedForDeletion.contains(emailFile)) {
                 out.println("-ERR Message already marked for deletion");
                 return;
             }
-
             // Marquer le message pour suppression
             markedForDeletion.add(emailFile);
             out.println("+OK Message marked for deletion");

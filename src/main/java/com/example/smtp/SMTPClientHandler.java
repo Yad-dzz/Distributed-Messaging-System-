@@ -68,13 +68,15 @@ public class SMTPClientHandler implements Runnable {
             out.println("500 Empty command");
             return;
         }
+        command = command.toUpperCase();
 
         switch (currentState) {
             case WAITING_FOR_HELO_EHLO:
                 if (command.startsWith("HELO")) {
                     out.println("250 Hello");
                     currentState = State.WAITING_FOR_MAIL_FROM;
-                } else if (command.startsWith("EHLO")) {
+                }
+                else if (command.startsWith("EHLO")) {
                     out.println("250-Hello");
                     out.println("250-8BITMIME");
                     out.println("250-SIZE 10485760");
@@ -94,7 +96,8 @@ public class SMTPClientHandler implements Runnable {
                         out.println("250 OK");
                         currentState = State.WAITING_FOR_RCPT_TO;
                     }
-                } else {
+                }
+                else {
                     out.println("503 Bad sequence of commands. Expected MAIL FROM");
                 }
                 break;
