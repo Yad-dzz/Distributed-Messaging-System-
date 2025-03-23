@@ -184,7 +184,7 @@ public class POP3ClientHandler implements Runnable {
         String digest = parts[2];
 
         // Simuler une vérification de digest (pour l'exemple, le secret est "password")
-        String secret = "password";
+        String secret = "loucif";
         String computedDigest = md5(timestamp + secret);
 
         if (computedDigest.equalsIgnoreCase(digest)) {

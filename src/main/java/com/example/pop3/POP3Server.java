@@ -9,7 +9,7 @@ public class POP3Server {
             System.out.println("POP3 Server is running on port 110...");
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                System.out.println("New client connected: " + clientSocket.getInetAddress());
+                System.out.println("New client USERonnected: " + clientSocket.getInetAddress());
                 // Handle client connection in a new thread
                 new Thread(new POP3ClientHandler(clientSocket)).start();
             }
