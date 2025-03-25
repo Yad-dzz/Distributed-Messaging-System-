@@ -4,10 +4,12 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SMTPServer {
     private static final int PORT = 25;
     private static final int MAX_THREADS = 10;  // Limit concurrent connections
+    private static final AtomicInteger clientCounter = new AtomicInteger(0);  // Track client count
 
     public static void main(String[] args) {
         ExecutorService threadPool = Executors.newFixedThreadPool(MAX_THREADS);
@@ -17,10 +19,12 @@ public class SMTPServer {
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                System.out.println("New client connected: " + clientSocket.getInetAddress());
+                int clientNumber = clientCounter.incrementAndGet();  // Get and increment client count
+
+                System.out.println("Client #" + clientNumber + " connected: " + clientSocket.getInetAddress());
 
                 // Assign client connection to a thread from the pool
-                threadPool.execute(new SMTPClientHandler(clientSocket));
+                threadPool.execute(new SMTPClientHandler(clientSocket, clientNumber));
             }
         } catch (Exception e) {
             e.printStackTrace();

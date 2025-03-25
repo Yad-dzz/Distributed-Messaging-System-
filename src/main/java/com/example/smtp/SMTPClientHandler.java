@@ -14,6 +14,7 @@ public class SMTPClientHandler implements Runnable {
     private Socket clientSocket;
     private PrintWriter out;
     private BufferedReader in;
+    private int clientNumber;  // Added client number tracking
 
     private String sender = null;
     private List<String> recipients = new ArrayList<>();
@@ -33,8 +34,10 @@ public class SMTPClientHandler implements Runnable {
 
     private State currentState;
 
-    public SMTPClientHandler(Socket socket) {
+    // Modified constructor to accept clientNumber
+    public SMTPClientHandler(Socket socket, int clientNumber) {
         this.clientSocket = socket;
+        this.clientNumber = clientNumber;  // Store client number
         this.currentState = State.WAITING_FOR_HELO_EHLO;
     }
 
@@ -44,11 +47,12 @@ public class SMTPClientHandler implements Runnable {
             in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             out = new PrintWriter(clientSocket.getOutputStream(), true);
 
-            out.println("220 SMTP Server Ready");
+            System.out.println("Handling Client #" + clientNumber); // Log client number
+            out.println("220 SMTP Server Ready - Client #" + clientNumber);
 
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
-                System.out.println("Received: " + inputLine);
+                System.out.println("Client #" + clientNumber + " Sent: " + inputLine);
                 handleSMTPCommand(inputLine.trim());
                 if (currentState == State.COMPLETED) break;
             }
@@ -56,6 +60,7 @@ public class SMTPClientHandler implements Runnable {
             e.printStackTrace();
         } finally {
             try {
+                System.out.println("Client #" + clientNumber + " disconnected.");
                 clientSocket.close();
             } catch (IOException e) {
                 e.printStackTrace();
