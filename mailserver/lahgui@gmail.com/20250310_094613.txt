@@ -1,6 +1,0 @@
-From: yadine@example.com
-To: lahgui
-Date: Mon Mar 10 09:46:13 CET 2025
-Subject: (No Subject)
-
-C'est un test d'envoi un email vers plusieurs destinations , merci . 
