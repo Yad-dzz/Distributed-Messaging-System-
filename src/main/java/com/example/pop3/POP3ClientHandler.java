@@ -11,16 +11,18 @@ public class POP3ClientHandler implements Runnable {
     private BufferedReader in;
     private PrintWriter out;
     private String user;
+    private int clientNumber;
     private boolean authenticated;
     private List<File> emails;
     private List<File> markedForDeletion;
     private String timestamp; // Pour APOP
 
-    public POP3ClientHandler(Socket socket) {
+    public POP3ClientHandler(Socket socket, int clientNumber) {
         this.clientSocket = socket;
         this.authenticated = false;
         this.emails = new ArrayList<>();
         this.markedForDeletion = new ArrayList<>();
+        this.clientNumber = clientNumber;
         this.timestamp = "<" + System.currentTimeMillis() + "@mailsystem>"; // Timestamp pour APOP
     }
 
@@ -37,7 +39,8 @@ public class POP3ClientHandler implements Runnable {
             // Lire les commandes du client
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
-                System.out.println("Received: " + inputLine);
+                System.out.println("Client #" + clientNumber + " Sent: " + inputLine);
+
 
                 // Normaliser la commande pour être insensible à la casse
                 String normalizedInput = inputLine.trim().toUpperCase();
@@ -200,6 +203,8 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
+        File userDir = new File("mailserver/" + user);
+        loadEmails(userDir);
         int messageCount = 0;
         long maildropSize = 0;
         // Parcourir les emails et ignorer ceux marqués pour suppression
@@ -219,23 +224,23 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
+        File userDir = new File("mailserver/" + user);
+        loadEmails(userDir);
         String[] parts = inputLine.split(" ");
         if (parts.length == 1) {
             // List all messages except password.txt
             out.println("+OK"); // Start response
             int messageCount = 0;
             long maildropSize = 0;
-            for (int i = 0; i < emails.size(); i++)
-            {
-                File emailFile = emails.get(i);
-                // Exclude password.txt
-                if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt"))
-                {
-                    messageCount++;
+
+            for (File emailFile : emails) {
+                if (!markedForDeletion.contains(emailFile) && !emailFile.getName().equals("password.txt")) {
+                    messageCount++; // Ensures proper numbering
                     maildropSize += emailFile.length();
                     out.println(messageCount + " " + emailFile.length());
                 }
             }
+
             out.println("."); // End response
         } else if (parts.length == 2) {
             // List specific message size
@@ -264,7 +269,8 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
-
+        File userDir = new File("mailserver/" + user);
+        loadEmails(userDir);
         try {
             int messageNumber = Integer.parseInt(inputLine.substring(5).trim());
             if (messageNumber < 1 || messageNumber > emails.size()) {
@@ -299,6 +305,8 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
+        File userDir = new File("mailserver/" + user);
+        loadEmails(userDir);
         try {
             int messageNumber = Integer.parseInt(inputLine.substring(5).trim());
             if (messageNumber < 1 || messageNumber > emails.size()) {
@@ -323,7 +331,6 @@ public class POP3ClientHandler implements Runnable {
             out.println("-ERR Not authenticated");
             return;
         }
-
         out.println("+OK");
     }
 
@@ -420,16 +427,18 @@ public class POP3ClientHandler implements Runnable {
         emails.clear();
         File[] files = userDir.listFiles();
         if (files != null) {
-            // Trier les fichiers par date de modification (du plus ancien au plus récent)
+            // Sort files by last modified date (oldest to newest)
             Arrays.sort(files, Comparator.comparingLong(File::lastModified));
 
             for (File file : files) {
-                if (file.isFile()) {
+                // Exclude password.txt from the list
+                if (file.isFile() && !file.getName().equalsIgnoreCase("password.txt")) {
                     emails.add(file);
                 }
             }
         }
     }
+
     private String md5(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
