@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SMTPServer {
     private static final int PORT = 25;
-    private static final int MAX_THREADS = 10;  // Limit concurrent connections
+    private static final int MAX_THREADS = 2;  // Limit concurrent connections
     private static final AtomicInteger clientCounter = new AtomicInteger(0);  // Track client count
 
     public static void main(String[] args) {
