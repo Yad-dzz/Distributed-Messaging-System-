@@ -15,7 +15,7 @@ import java.util.Map;
 
 public class AuthServiceImpl extends UnicastRemoteObject implements AuthService {
 
-    private static final String USERS_FILE = "server/users.json";
+    private static final String USERS_FILE = "users.json";
     private Map<String, String> users;
     private Gson gson = new Gson();
 
