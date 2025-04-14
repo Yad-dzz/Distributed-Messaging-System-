@@ -1,44 +1,33 @@
 package com.example.smtp;
 
-import java.io.*;
+import com.example.auth.AuthService;
+import com.example.utils.FileUtils;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
-
 public class SMTPClientHandler implements Runnable {
-    private Socket clientSocket;
-    private PrintWriter out;
-    private BufferedReader in;
-    private int clientNumber;  // Added client number tracking
+    private static final int MAX_MESSAGE_SIZE = 10485760; // 10 Mo
 
-    private String sender = null;
+    private Socket clientSocket;
+    private BufferedReader in;
+    private PrintWriter out;
+    private AuthService authService;
+    private boolean isAuthenticated = false;
+    private boolean heloReceived = false;
+    private boolean mailFromReceived = false;
+    private boolean rcptToReceived = false;
+    private String from = null;
     private List<String> recipients = new ArrayList<>();
     private StringBuilder emailContent = new StringBuilder();
-    private boolean receivingData = false;
 
-    private static final Pattern EMAIL_PATTERN = Pattern.compile("^<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})>$");
-
-    private enum State {
-        WAITING_FOR_HELO_EHLO,
-        WAITING_FOR_MAIL_FROM,
-        WAITING_FOR_RCPT_TO,
-        WAITING_FOR_DATA,
-        RECEIVING_DATA,
-        COMPLETED
-    }
-
-    private State currentState;
-
-    // Modified constructor to accept clientNumber
-    public SMTPClientHandler(Socket socket, int clientNumber) {
+    public SMTPClientHandler(Socket socket, AuthService authService) {
         this.clientSocket = socket;
-        this.clientNumber = clientNumber;  // Store client number
-        this.currentState = State.WAITING_FOR_HELO_EHLO;
+        this.authService = authService;
     }
 
     @Override
@@ -46,145 +35,181 @@ public class SMTPClientHandler implements Runnable {
         try {
             in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             out = new PrintWriter(clientSocket.getOutputStream(), true);
-
-            System.out.println("Handling Client #" + clientNumber); // Log client number
-            out.println("220 SMTP Server Ready - Client #" + clientNumber);
+            out.println("220 " + clientSocket.getLocalAddress().getHostName() + " SMTP Service Ready");
 
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
-                System.out.println("Client #" + clientNumber + " Sent: " + inputLine);
-                handleSMTPCommand(inputLine.trim());
-                if (currentState == State.COMPLETED) break;
+                System.out.println("Received: " + inputLine);
+                String normalizedInput = inputLine.trim().toUpperCase();
+
+                if (normalizedInput.startsWith("AUTH")) {
+                    handleAuth(inputLine);
+                } else if (normalizedInput.startsWith("QUIT")) {
+                    handleQuit();
+                    break;
+                } else if (!heloReceived && !normalizedInput.startsWith("HELO") && !normalizedInput.startsWith("EHLO")) {
+                    out.println("503 Bad sequence of commands: HELO/EHLO required first");
+                } else if (!isAuthenticated && !normalizedInput.startsWith("HELO") && !normalizedInput.startsWith("EHLO")) {
+                    out.println("530 Authentication required");
+                } else if (normalizedInput.startsWith("HELO") || normalizedInput.startsWith("EHLO"))
+                    handleHelo(inputLine);
+                else if (normalizedInput.startsWith("MAIL FROM")) {
+                    handleMailFrom(inputLine);
+                } else if (normalizedInput.startsWith("RCPT TO")) {
+                    handleRcptTo(inputLine);
+                } else if (normalizedInput.equals("DATA")) {
+                    handleData();
+                } else {
+                    out.println("500 Command not recognized");
+                }
             }
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
             try {
-                System.out.println("Client #" + clientNumber + " disconnected.");
                 clientSocket.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
+    private void handleAuth(String inputLine) {
+        String[] parts = inputLine.split(" ");
+        if (parts.length >= 2) {
+            String method = parts[1].toUpperCase();
+            if (method.equals("PLAIN") || method.equals("LOGIN")) {
+                try {
+                    if (parts.length == 3) {
+                        // Authentification en une étape (PLAIN)
+                        String credentials = parts[2];
+                        String[] authParts = credentials.split("\0");
+                        if (authParts.length == 3) {
+                            isAuthenticated = authService.authenticate(authParts[1], authParts[2]);
+                        }
+                    } else {
+                        // Authentification en deux étapes (LOGIN)
+                        out.println("334 Username:");
+                        String username = in.readLine();
+                        out.println("334 Password:");
+                        String password = in.readLine();
+                        isAuthenticated = authService.authenticate(username, password);
+                    }
+                    out.println(isAuthenticated ? "235 Authentication successful" : "535 Authentication failed");
+                } catch (IOException | IllegalArgumentException e) {
+                    out.println("501 Syntax error in parameters or arguments");
+                }
+            } else {
+                out.println("504 Unsupported authentication mechanism");
+            }
+        } else {
+            out.println("501 Syntax error in parameters or arguments");
+        }
+    }
 
-    private void handleSMTPCommand(String command) {
-        if (command.isEmpty()) {
-            out.println("500 Empty command");
+
+    private void handleHelo(String inputLine) {
+        heloReceived = true;
+        if (inputLine.trim().toUpperCase().startsWith("EHLO")) {
+            out.println("250-" + clientSocket.getLocalAddress().getHostName() + " Hello " + inputLine.substring(5).trim());
+            out.println("250-8BITMIME");
+            out.println("250-SIZE " + MAX_MESSAGE_SIZE);
+            out.println("250-AUTH PLAIN LOGIN");
+            out.println("250 HELP");
+        } else {
+            out.println("250 Hello " + inputLine.substring(5).trim());
+        }
+    }
+
+    private void handleMailFrom(String inputLine) {
+        if (!heloReceived) {
+            out.println("503 Bad sequence of commands: HELO/EHLO first");
             return;
         }
-        command = command.toUpperCase();
-
-        switch (currentState) {
-            case WAITING_FOR_HELO_EHLO:
-                if (command.startsWith("HELO")) {
-                    out.println("250 Hello");
-                    currentState = State.WAITING_FOR_MAIL_FROM;
-                }
-                else if (command.startsWith("EHLO")) {
-                    out.println("250-Hello");
-                    out.println("250-8BITMIME");
-                    out.println("250-SIZE 10485760");
-                    out.println("250 HELP");
-                    currentState = State.WAITING_FOR_MAIL_FROM;
-                } else {
-                    out.println("503 Bad sequence of commands. Expected HELO or EHLO");
-                }
-                break;
-
-            case WAITING_FOR_MAIL_FROM:
-                if (command.startsWith("MAIL FROM:")) {
-                    sender = extractEmail(command);
-                    if (sender == null) {
-                        out.println("501 Syntax error in MAIL FROM address");
-                    } else {
-                        out.println("250 OK");
-                        currentState = State.WAITING_FOR_RCPT_TO;
-                    }
-                }
-                else {
-                    out.println("503 Bad sequence of commands. Expected MAIL FROM");
-                }
-                break;
-
-            case WAITING_FOR_RCPT_TO:
-                if (command.startsWith("RCPT TO:")) {
-                    String recipient = extractEmail(command);
-                    if (recipient == null) {
-                        out.println("501 Syntax error in RCPT TO address");
-                    } else if (Files.exists(Paths.get("mailserver/" + recipient))) {
-                        recipients.add(recipient);
-                        out.println("250 OK - User Exists");
-                    } else {
-                        out.println("550 No such user");
-                    }
-                } else if (command.startsWith("DATA")) {
-                    if (!recipients.isEmpty()) {
-                        out.println("354 Start mail input; end with <CRLF>.<CRLF>");
-                        emailContent.setLength(0);
-                        receivingData = true;
-                        currentState = State.RECEIVING_DATA;
-                    } else {
-                        out.println("554 Transaction failed - No valid recipients");
-                    }
-                } else {
-                    out.println("503 Bad sequence of commands. Expected RCPT TO or DATA");
-                }
-                break;
-
-            case RECEIVING_DATA:
-                if (command.equals(".")) {
-                    saveEmail();
-                    out.println("250 OK - Email Stored");
-                    currentState = State.COMPLETED;
-                } else {
-                    emailContent.append(command).append("\n");
-                }
-                break;
-
-            case COMPLETED:
-                if (command.startsWith("QUIT")) {
-                    out.println("221 Bye");
-                } else {
-                    out.println("503 Session closing");
-                }
-                break;
-
-            default:
-                out.println("500 Unknown state");
-                break;
+        String email = extractEmail(inputLine);
+        if (isValidEmail(email)) {
+            mailFromReceived = true;
+            from = email;
+            out.println("250 Sender OK");
+        } else {
+            out.println("501 Syntax error in parameters or arguments");
         }
     }
 
-    private void saveEmail() {
-        if (sender == null || recipients.isEmpty() || emailContent.length() == 0) return;
+    private void handleRcptTo(String inputLine) {
+        if (!mailFromReceived) {
+            out.println("503 Bad sequence of commands: MAIL FROM required first");
+            return;
+        }
+        String email = extractEmail(inputLine);
+        if (isValidEmail(email)) {
+            rcptToReceived = true;
+            recipients.add(email);
+            out.println("250 Recipient OK");
+        } else {
+            out.println("550 Invalid recipient address");
+        }
+    }
 
-        for (String recipient : recipients) {
-            String userDir = "mailserver/" + recipient;
-            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String filename = userDir + "/" + timestamp + ".txt";
-
-            try {
-                Files.createDirectories(Paths.get(userDir));
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
-                    writer.write("From: " + sender + "\n");
-                    writer.write("To: " + recipient + "\n");
-                    writer.write("Date: " + new Date() + "\n");
-                    writer.write("Subject: (No Subject)\n\n");
-                    writer.write(emailContent.toString());
+    private void handleData() throws IOException {
+        if (!rcptToReceived) {
+            out.println("503 Bad sequence of commands: RCPT TO required first");
+            return;
+        }
+        out.println("354 Start mail input; end with <CRLF>.<CRLF>");
+        String inputLine;
+        try {
+            while ((inputLine = in.readLine()) != null) {
+                if (inputLine.equals(".")) {
+                    break;
                 }
-                System.out.println("Email saved to: " + filename);
-            } catch (IOException e) {
-                e.printStackTrace();
+                emailContent.append(inputLine).append("\n");
             }
+        } catch (IOException e) {
+            // Handle connection interruption
+            out.println("421 Connection interrupted, email not saved");
+            resetState();
+            return;
+        }
+        if (emailContent.length() > MAX_MESSAGE_SIZE) {
+            out.println("552 Message size exceeds fixed maximum message size");
+            return;
+        }
+        if (from != null && !recipients.isEmpty()) {
+            for (String recipient : recipients) {
+                FileUtils.saveEmail(recipient, emailContent.toString());
+            }
+            out.println("250 Email received and saved");
+        } else {
+            out.println("550 Invalid sender or recipient");
+        }
+        resetState();
+    }
+    private void handleQuit() {
+        out.println("221 Bye");
+        try {
+            clientSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
-    private String extractEmail(String command) {
-        String extracted = command.replaceAll(".*<|>", "").trim();
-        if (!EMAIL_PATTERN.matcher("<" + extracted + ">").matches()) {
+    private String extractEmail(String inputLine) {
+        if (inputLine == null || !inputLine.contains("<") || !inputLine.contains(">")) {
             return null;
         }
-        return extracted;
+        int start = inputLine.indexOf('<');
+        int end = inputLine.indexOf('>');
+        return (start != -1 && end != -1 && start < end) ? inputLine.substring(start + 1, end).trim() : null;
+    }
+
+    private boolean isValidEmail(String email) {
+        return email != null && email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$");
+    }
+
+    private void resetState() {
+        mailFromReceived = false;
+        rcptToReceived = false;
+        recipients.clear();
+        emailContent.setLength(0);
     }
 }
