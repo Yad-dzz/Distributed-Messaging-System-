@@ -2,28 +2,33 @@ package com.example.pop3;
 
 import java.io.*;
 import java.net.Socket;
+import java.rmi.RemoteException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import com.example.auth.AuthService;
 
 public class POP3ClientHandler implements Runnable {
     private Socket clientSocket;
     private BufferedReader in;
     private PrintWriter out;
     private String user;
+    private AuthService authService;
+
     private int clientNumber;
     private boolean authenticated;
     private List<File> emails;
     private List<File> markedForDeletion;
     private String timestamp; // Pour APOP
 
-    public POP3ClientHandler(Socket socket, int clientNumber) {
+    public POP3ClientHandler(Socket socket, int clientNumber, AuthService authService) {
         this.clientSocket = socket;
         this.authenticated = false;
         this.emails = new ArrayList<>();
         this.markedForDeletion = new ArrayList<>();
         this.clientNumber = clientNumber;
         this.timestamp = "<" + System.currentTimeMillis() + "@mailsystem>"; // Timestamp pour APOP
+        this.authService = authService;
     }
 
 
@@ -138,44 +143,36 @@ public class POP3ClientHandler implements Runnable {
             }
         }
     }
-    private void handleUser(String inputLine) {
+    private void handleUser(String inputLine) throws RemoteException {
         user = inputLine.substring(5).trim();
         File userDir = new File("mailserver/" + user);
-        if (userDir.exists() && userDir.isDirectory()) {
+        if (userDir.exists() && userDir.isDirectory() && authService.userExists(user)) {
             out.println("+OK User accepted");
             loadEmails(userDir); // Charger les emails de l'utilisateur
         } else {
             out.println("-ERR User not found");
         }
     }
-
     private void handlePass(String inputLine) {
         if (user != null) {
-            String userDirectory = "mailserver/" + user; // Dossier de l'utilisateur
-            File passwordFile = new File(userDirectory, "password.txt");
+            String providedPassword = inputLine.replaceFirst("^PASS\\s+", "").trim();
 
-            if (passwordFile.exists()) {
-                try (BufferedReader br = new BufferedReader(new FileReader(passwordFile))) {
-                    String storedPassword = br.readLine().trim(); // Lire le mot de passe du fichier
-
-                    String providedPassword = inputLine.replaceFirst("^PASS\\s+", "").trim();
-
-                    if (storedPassword.equals(providedPassword)) { // Comparer avec le mot de passe fourni
-                        authenticated = true;
-                        out.println("+OK User authenticated");
-                    } else {
-                        out.println("-ERR Invalid password");
-                    }
-                } catch (IOException e) {
-                    out.println("-ERR Error reading password file");
+            try {
+                if (authService.authenticate(user, providedPassword)) {
+                    authenticated = true;
+                    out.println("+OK User authenticated");
+                } else {
+                    out.println("-ERR Invalid password");
                 }
-            } else {
-                out.println("-ERR Password file not found");
+            } catch (RemoteException e) {
+                out.println("-ERR Authentication service error: " + e.getMessage());
             }
         } else {
             out.println("-ERR User not specified");
         }
     }
+
+
     private void handleApop(String inputLine) {
         String[] parts = inputLine.split(" ");
         if (parts.length < 3) {
