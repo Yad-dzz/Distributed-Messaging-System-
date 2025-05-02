@@ -1,6 +1,6 @@
 package com.example.auth;
 
-import database.DatabaseManager;
+import com.example.database.DatabaseManager;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.ArrayList;
