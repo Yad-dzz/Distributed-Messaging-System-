@@ -1,9 +1,7 @@
 package com.example.server;
 
-
-
 import com.example.auth.AuthService;
-import com.example.auth.AuthServiceImpl;
+import com.example.auth.DatabaseAuthServiceImpl;
 
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -16,8 +14,8 @@ public class RMIServer {
 
     public static void main(String[] args) {
         try {
-
-            AuthService authService = new AuthServiceImpl();
+            // Create the database-based authentication service
+            AuthService authService = new DatabaseAuthServiceImpl();
             Registry registry = LocateRegistry.createRegistry(PORT);
             registry.rebind("AuthService", authService);
 
